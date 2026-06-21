@@ -19,18 +19,26 @@ from pyrogram.types import InputMediaPhoto, InputMediaVideo
 logging.getLogger("pyrogram").setLevel(logging.CRITICAL)
 
 # --- RENDER'I UYANIK TUTMAK İÇİN MİNİ WEB SUNUCUSU ---
-class SağlıkKontrolü(BaseHTTPRequestHandler):
+class SaglikKontrolu(BaseHTTPRequestHandler):
+    # Normal tıklatmalar için
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
         self.wfile.write("Bot aktif ve çalışıyor!".encode("utf-8"))
+        
+    # UptimeRobot'un ücretsiz paketindeki tıklatmalar için (YENİ EKLENEN KISIM)
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
+        
     def log_message(self, format, *args):
-        return # Terminali kirletmemesi için loglamayı kapatıyoruz
+        return # Terminal loglarının kirlenmesini önler
 
 def web_sunucusunu_baslat():
     port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), SağlıkKontrolü)
+    server = HTTPServer(("0.0.0.0", port), SaglikKontrolu)
     server.serve_forever()
 
 Thread(target=web_sunucusunu_baslat, daemon=True).start()
