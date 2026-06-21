@@ -3,6 +3,16 @@ import asyncio
 import logging
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
+
+# --- PYTHON 3.14+ (EVENT LOOP) UYUMLULUK YAMASI ---
+# Pyrogram kütüphanesini çağırmadan ÖNCE bir döngü oluşturuyoruz
+try:
+    loop = asyncio.get_event_loop()
+except RuntimeError:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+# --------------------------------------------------
+
 from pyrogram import Client, filters
 from pyrogram.types import InputMediaPhoto, InputMediaVideo
 
@@ -16,19 +26,17 @@ class SağlıkKontrolü(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write("Bot aktif ve çalışıyor!".encode("utf-8"))
     def log_message(self, format, *args):
-        return # Terminal loglarının kirlenmesini önler
+        return # Terminali kirletmemesi için loglamayı kapatıyoruz
 
 def web_sunucusunu_baslat():
-    # Render varsayılan olarak PORT değişkeni atar, yoksa 8080 kullanır
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(("0.0.0.0", port), SağlıkKontrolü)
     server.serve_forever()
 
-# Web sunucusunu botu engellememesi için arka planda ayrı bir iş parçacığında (Thread) başlatıyoruz
 Thread(target=web_sunucusunu_baslat, daemon=True).start()
 # -----------------------------------------------------
 
-# --- GİZLİ KEYLERİ (ENVIRONMENT VARIABLES) SUNUCUDAN ÇEKME ---
+# --- GİZLİ KEYLERİ SUNUCUDAN ÇEKME ---
 API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 STRING_SESSION = os.environ.get("STRING_SESSION")
@@ -38,16 +46,15 @@ KAYNAK_KONU = int(os.environ.get("KAYNAK_KONU"))
 
 YEDEK_GRUP_ID = int(os.environ.get("YEDEK_GRUP_ID"))
 YEDEK_KONU = int(os.environ.get("YEDEK_KONU"))
-# --------------------------------------------------------------
+# -------------------------------------
 
-def susturucu(loop, context):
+def susturucu(hata_loop, context):
     hata_metni = str(context.get("exception", ""))
     if "Peer id invalid" in hata_metni or "ID not found" in hata_metni:
         pass 
     else:
-        loop.default_exception_handler(context)
+        hata_loop.default_exception_handler(context)
 
-loop = asyncio.get_event_loop()
 loop.set_exception_handler(susturucu)
 
 app = Client("benim_userbotum", api_id=API_ID, api_hash=API_HASH, session_string=STRING_SESSION)
