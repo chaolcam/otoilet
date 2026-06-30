@@ -25,7 +25,7 @@ class SaglikKontrolu(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
-        self.wfile.write("Userbot Canlı Sohbet Loglama Modunda Aktif!".encode("utf-8"))
+        self.wfile.write("Userbot Canlı Sohbet Loglama ve Manuel İndirme Modunda Aktif!".encode("utf-8"))
         
     def log_message(self, format, *args):
         return 
@@ -48,7 +48,7 @@ YEDEK_GRUP_ID = int(os.environ.get("YEDEK_GRUP_ID"))
 YEDEK_KONU = int(os.environ.get("YEDEK_KONU"))
 LOG_KONU = 78582
 
-# 3. YEDEKLEME VE CANLI LOG AKIŞ KONUSU (İndirilen Tüm Medyalar İçin)
+# 3. YEDEKLEME VE CANLI LOG AKIŞ KONUSU
 YENI_LOG_KONU = 93842
 
 KAYNAK_IDLER = []
@@ -63,13 +63,13 @@ app = Client("benim_userbotum", api_id=API_ID, api_hash=API_HASH, session_string
 
 album_havuzu = {}
 
-# Sohbet içine anlık log basmayı sağlayan yardımcı asenkron fonksiyon (SADECE 93842'YE ATAR)
+# Sohbet içine anlık log basmayı sağlayan yardımcı asenkron fonksiyon
 async def sohbet_log_gonder(client, metin):
     try:
         await client.send_message(
             chat_id=YEDEK_GRUP_ID,
             text=f"🤖 <b>[SİSTEM LOGU]:</b>\n{metin}",
-            reply_to_message_id=YENI_LOG_KONU, # Loglar direkt 93842'ye!
+            reply_to_message_id=YENI_LOG_KONU,
             parse_mode=ParseMode.HTML
         )
     except:
@@ -85,6 +85,88 @@ def ram_dosyasini_isimlendir(msg, ram_dosyasi):
     else: ram_dosyasi.name = "bilinmeyen_dosya.dat"
     return ram_dosyasi
 
+# ==========================================
+# YENİ ÖZELLİK: MANUEL LİNKTEN İNDİRME KOMUTU
+# ==========================================
+@app.on_message(filters.command("indir", prefixes=".") & filters.me)
+async def manuel_linkten_indir(client, message):
+    if len(message.command) < 2:
+        await message.edit_text("❌ **Kullanım:** `.indir https://t.me/...`", parse_mode=ParseMode.MARKDOWN)
+        return
+        
+    link = message.command[1]
+    
+    try:
+        durum_mesaji = await message.edit_text("⏳ **Link analiz ediliyor...**", parse_mode=ParseMode.MARKDOWN)
+        
+        # Linki Parçalayıp Chat ID ve Message ID'yi Bulma
+        parts = link.rstrip("/").split("/")
+        
+        # Eğer linkte "?single" gibi parametreler varsa temizle
+        msg_id_str = parts[-1].split("?")[0]
+        msg_id = int(msg_id_str)
+        
+        if "c" in parts:
+            # Gizli grup/kanal formatı: https://t.me/c/1234567890/123
+            chat_id = int("-100" + parts[-2])
+        else:
+            # Açık kanal/grup formatı: https://t.me/KanalAdi/123
+            chat_id = parts[-2]
+            
+        # Mesajı Telegramdan Çek
+        msg = await client.get_messages(chat_id, msg_id)
+        
+        if not msg or msg.empty:
+            await durum_mesaji.edit_text("❌ **Mesaj bulunamadı!**\n(O gruba/kanala hesabınızın üye olduğundan emin olun.)", parse_mode=ParseMode.MARKDOWN)
+            return
+            
+        if not msg.media:
+            await durum_mesaji.edit_text("❌ **Bu linkte indirilecek herhangi bir medya bulunmuyor.**", parse_mode=ParseMode.MARKDOWN)
+            return
+
+        # Komutun yazıldığı yerin tespiti
+        hedef_chat = message.chat.id
+        hedef_konu = getattr(message, 'message_thread_id', None)
+        
+        await durum_mesaji.edit_text("⏳ **Medya kısıtlamaları aşılarak RAM'e indiriliyor...**", parse_mode=ParseMode.MARKDOWN)
+        
+        # ALBÜM KONTROLÜ
+        if msg.media_group_id:
+            album_mesajlari = await client.get_media_group(chat_id, msg_id)
+            medya_grubu = []
+            
+            for m in album_mesajlari:
+                ram_dosyasi = await client.download_media(m, in_memory=True)
+                ram_dosyasi = ram_dosyasini_isimlendir(m, ram_dosyasi)
+                
+                if m.photo: medya_grubu.append(InputMediaPhoto(media=ram_dosyasi))
+                elif m.video: medya_grubu.append(InputMediaVideo(media=ram_dosyasi))
+                elif m.document: medya_grubu.append(InputMediaDocument(media=ram_dosyasi))
+                elif m.audio: medya_grubu.append(InputMediaAudio(media=ram_dosyasi))
+            
+            await client.send_media_group(chat_id=hedef_chat, media=medya_grubu, reply_to_message_id=hedef_konu)
+            
+        # TEKLİ MEDYA KONTROLÜ
+        else:
+            ram_dosyasi = await client.download_media(msg, in_memory=True)
+            ram_dosyasi = ram_dosyasini_isimlendir(msg, ram_dosyasi)
+            
+            if msg.photo: await client.send_photo(chat_id=hedef_chat, photo=ram_dosyasi, reply_to_message_id=hedef_konu)
+            elif msg.video: await client.send_video(chat_id=hedef_chat, video=ram_dosyasi, reply_to_message_id=hedef_konu)
+            elif msg.audio or msg.voice: await client.send_audio(chat_id=hedef_chat, audio=ram_dosyasi, reply_to_message_id=hedef_konu)
+            elif msg.document: await client.send_document(chat_id=hedef_chat, document=ram_dosyasi, reply_to_message_id=hedef_konu)
+            elif msg.video_note:
+                await client.send_video_note(chat_id=hedef_chat, video_note=ram_dosyasi, reply_to_message_id=hedef_konu)
+        
+        # İşlem bitince komutu siler
+        await durum_mesaji.delete()
+        
+    except Exception as e:
+        await message.edit_text(f"❌ **İndirme hatası:** `{e}`", parse_mode=ParseMode.MARKDOWN)
+
+# ==========================================
+# OTO-İLET SİSTEMİ (Arka Plan Dinleyicisi)
+# ==========================================
 async def albumu_isle_ve_yolla(client, grup_id):
     await asyncio.sleep(2.5) 
     mesajlar = album_havuzu.pop(grup_id, None)
@@ -110,13 +192,11 @@ async def albumu_isle_ve_yolla(client, grup_id):
     await sohbet_log_gonder(client, f"🔄 İndirme işlemi başladı. Toplam parça: {len(mesajlar)}")
 
     try:
-        # ==========================================
-        # 1. TEKLİ MEDYA İŞLEMLERİ
-        # ==========================================
+        # TEKLİ MEDYA
         if len(mesajlar) == 1:
             msg = mesajlar[0]
             
-            # ---> A) ESKİ SİSTEM YEDEKLEMESİ (78582 ve Orijinal Konu) <---
+            # ---> ESKİ SİSTEM YEDEKLEMESİ <---
             try:
                 if msg.photo:
                     await client.send_photo(chat_id=YEDEK_GRUP_ID, photo=msg.photo.file_id, reply_to_message_id=YEDEK_KONU, caption="yakalandı")
@@ -133,7 +213,7 @@ async def albumu_isle_ve_yolla(client, grup_id):
             except Exception as e:
                 pass
 
-            # ---> B) YENİ SİSTEM YEDEKLEMESİ (SADECE 93842'YE GÖNDERİLİR) <---
+            # ---> YENİ SİSTEM YEDEKLEMESİ (RAM Bypass 93842'ye) <---
             try:
                 indirilen_dosya = await client.download_media(msg, in_memory=True)
                 
@@ -143,7 +223,6 @@ async def albumu_isle_ve_yolla(client, grup_id):
                     
                 indirilen_dosya = ram_dosyasini_isimlendir(msg, indirilen_dosya)
                 
-                # Tüm indirilenler YENI_LOG_KONU (93842) ID'sine yüklenir!
                 if msg.photo:
                     await client.send_photo(chat_id=YEDEK_GRUP_ID, photo=indirilen_dosya, reply_to_message_id=YENI_LOG_KONU, caption=ortak_aciklama_yeni, parse_mode=ParseMode.HTML)
                 elif msg.video:
@@ -160,11 +239,9 @@ async def albumu_isle_ve_yolla(client, grup_id):
             except Exception as e:
                 await sohbet_log_gonder(client, f"❌ İndirilen medyanın yüklenmesinde hata: {e}")
 
-        # ==========================================
-        # 2. ALBÜM İŞLEMLERİ
-        # ==========================================
+        # ALBÜM İŞLEMLERİ
         else:
-            # ---> A) ESKİ SİSTEM ALBÜM YEDEKLEMESİ (78582 ve Orijinal Konu) <---
+            # ---> ESKİ SİSTEM ALBÜM YEDEKLEMESİ <---
             try:
                 eski_yedek_medyalari = []
                 eski_log_medyalari = []
@@ -184,7 +261,7 @@ async def albumu_isle_ve_yolla(client, grup_id):
             except Exception as e:
                 pass
 
-            # ---> B) YENİ SİSTEM ALBÜM YEDEKLEMESİ (SADECE 93842'YE GÖNDERİLİR) <---
+            # ---> YENİ SİSTEM ALBÜM YEDEKLEMESİ <---
             try:
                 yeni_log_medyalari = []
                 for i, msg in enumerate(mesajlar):
@@ -202,7 +279,6 @@ async def albumu_isle_ve_yolla(client, grup_id):
                         yeni_log_medyalari.append(InputMediaAudio(media=indirilen_dosya, caption=yazi, parse_mode=ParseMode.HTML))
                 
                 if yeni_log_medyalari:
-                    # YENI_LOG_KONU (93842) kullanılarak gönderim yapılır
                     await client.send_media_group(chat_id=YEDEK_GRUP_ID, media=yeni_log_medyalari, reply_to_message_id=YENI_LOG_KONU)
                     await sohbet_log_gonder(client, "🎉 İndirilen albüm grubu başarıyla 93842 konusuna yüklendi!")
             except Exception as e:
@@ -216,7 +292,6 @@ async def albumu_isle_ve_yolla(client, grup_id):
 async def medyayi_dinle(client, message):
     if message.web_page: return 
 
-    # Mesaj yakalandığı an direkt 93842 konusuna Log atar!
     grup_adi = message.chat.title or "Bilinmeyen Sohbet"
     await sohbet_log_gonder(client, f"👀 <b>Medya Yakalandı!</b>\n📍 <b>Kaynak:</b> {grup_adi}\n🗂 İndirme havuzuna ekleniyor...")
 
@@ -228,5 +303,5 @@ async def medyayi_dinle(client, message):
     
     album_havuzu[grup_id].append(message)
 
-print("🚀 3'lü Canlı Sohbet Log Destekli İletici Userbot Başlatıldı...")
+print("🚀 3'lü Canlı Sohbet Log ve Manuel İndirme Destekli Userbot Başlatıldı...")
 app.run()
