@@ -26,7 +26,7 @@ class SaglikKontrolu(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
-        self.wfile.write("Userbot Optimize Edilmiş 3 Hatli İletim Sistemiyle Aktif!".encode("utf-8"))
+        self.wfile.write("Userbot Tum Hatlariyla ve Işık Hızında Snipe Moduyla Aktif!".encode("utf-8"))
         
     def log_message(self, format, *args):
         return 
@@ -50,7 +50,6 @@ KAYNAK_KONU = int(os.environ.get("KAYNAK_KONU"))
 
 YEDEK_GRUP_ID = int(os.environ.get("YEDEK_GRUP_ID"))
 YEDEK_KONU = int(os.environ.get("YEDEK_KONU"))
-LOG_KONU = 78582
 
 # 2. HAT: EKSTRA KANALLAR VE 93842 KONUSU
 YENI_LOG_KONU = 93842
@@ -108,7 +107,13 @@ async def manuel_linkten_indir(client, message):
     durum_mesaji = await message.edit_text(f"⏳ **Toplu indirme başlatılıyor... Toplam: {len(links)}**", parse_mode=ParseMode.MARKDOWN)
     
     hedef_chat = message.chat.id
-    hedef_konu = getattr(message, 'message_thread_id', None)
+    
+    # KESİN KONU (THREAD) TESPİTİ - General Chate Kaçmayı Önler
+    hedef_konu = message.message_thread_id
+    if not hedef_konu and message.reply_to_message:
+        hedef_konu = message.reply_to_message.message_thread_id or message.reply_to_message_id
+    if not hedef_konu:
+        hedef_konu = message.id
     
     basarili = 0
     hatali = 0
@@ -182,48 +187,38 @@ async def albumu_isle_ve_yolla(client, grup_id):
     else:
         kisi_linki_html = "<i>Gizli/Bilinmeyen Kullanıcı</i>"
 
-    # ---> 1. HAT: ORİJİNAL GRUP AYARLARI (YEDEK_KONU ve 78582) <---
-    # DİKKAT: Burada RAM'e indirme yok, doğrudan file_id ile ışık hızında yönlendirilir!
+    # ---> 1. HAT: ORİJİNAL GRUP (SADECE YEDEK_KONU) <---
     if kaynak_id == KAYNAK_GRUP_ID:
-        eski_log_yazisi = f"👤 Gönderen: {kisi_linki_html}"
+        eski_yedek_yazisi = f"yakalandı\n👤 Gönderen: {kisi_linki_html}"
         
         try:
             if len(mesajlar) == 1:
                 msg = mesajlar[0]
+                
                 if msg.photo:
-                    await client.send_photo(chat_id=YEDEK_GRUP_ID, photo=msg.photo.file_id, reply_to_message_id=YEDEK_KONU, caption="yakalandı", parse_mode=ParseMode.HTML)
-                    await client.send_photo(chat_id=YEDEK_GRUP_ID, photo=msg.photo.file_id, reply_to_message_id=LOG_KONU, caption=eski_log_yazisi, parse_mode=ParseMode.HTML)
+                    await client.send_photo(chat_id=YEDEK_GRUP_ID, photo=msg.photo.file_id, reply_to_message_id=YEDEK_KONU, caption=eski_yedek_yazisi, parse_mode=ParseMode.HTML)
                 elif msg.video:
-                    await client.send_video(chat_id=YEDEK_GRUP_ID, video=msg.video.file_id, reply_to_message_id=YEDEK_KONU, caption="yakalandı", parse_mode=ParseMode.HTML)
-                    await client.send_video(chat_id=YEDEK_GRUP_ID, video=msg.video.file_id, reply_to_message_id=LOG_KONU, caption=eski_log_yazisi, parse_mode=ParseMode.HTML)
+                    await client.send_video(chat_id=YEDEK_GRUP_ID, video=msg.video.file_id, reply_to_message_id=YEDEK_KONU, caption=eski_yedek_yazisi, parse_mode=ParseMode.HTML)
                 elif msg.document:
-                    await client.send_document(chat_id=YEDEK_GRUP_ID, document=msg.document.file_id, reply_to_message_id=YEDEK_KONU, caption="yakalandı", parse_mode=ParseMode.HTML)
-                    await client.send_document(chat_id=YEDEK_GRUP_ID, document=msg.document.file_id, reply_to_message_id=LOG_KONU, caption=eski_log_yazisi, parse_mode=ParseMode.HTML)
+                    await client.send_document(chat_id=YEDEK_GRUP_ID, document=msg.document.file_id, reply_to_message_id=YEDEK_KONU, caption=eski_yedek_yazisi, parse_mode=ParseMode.HTML)
                 elif msg.audio or msg.voice:
-                    await client.send_audio(chat_id=YEDEK_GRUP_ID, audio=(msg.audio.file_id if msg.audio else msg.voice.file_id), reply_to_message_id=YEDEK_KONU, caption="yakalandı", parse_mode=ParseMode.HTML)
-                    await client.send_audio(chat_id=YEDEK_GRUP_ID, audio=(msg.audio.file_id if msg.audio else msg.voice.file_id), reply_to_message_id=LOG_KONU, caption=eski_log_yazisi, parse_mode=ParseMode.HTML)
+                    await client.send_audio(chat_id=YEDEK_GRUP_ID, audio=(msg.audio.file_id if msg.audio else msg.voice.file_id), reply_to_message_id=YEDEK_KONU, caption=eski_yedek_yazisi, parse_mode=ParseMode.HTML)
             else:
                 yedek_medyalari = []
-                log_medyalari = []
                 for i, msg in enumerate(mesajlar):
-                    o_yazi = "yakalandı" if i == 0 else ""
-                    l_yazi = eski_log_yazisi if i == 0 else ""
+                    o_yazi = eski_yedek_yazisi if i == 0 else ""
                     
                     if msg.photo:
                         yedek_medyalari.append(InputMediaPhoto(media=msg.photo.file_id, caption=o_yazi, parse_mode=ParseMode.HTML))
-                        log_medyalari.append(InputMediaPhoto(media=msg.photo.file_id, caption=l_yazi, parse_mode=ParseMode.HTML))
                     elif msg.video:
                         yedek_medyalari.append(InputMediaVideo(media=msg.video.file_id, caption=o_yazi, parse_mode=ParseMode.HTML))
-                        log_medyalari.append(InputMediaVideo(media=msg.video.file_id, caption=l_yazi, parse_mode=ParseMode.HTML))
                 
                 if yedek_medyalari:
                     await client.send_media_group(chat_id=YEDEK_GRUP_ID, media=yedek_medyalari, reply_to_message_id=YEDEK_KONU)
-                    await client.send_media_group(chat_id=YEDEK_GRUP_ID, media=log_medyalari, reply_to_message_id=LOG_KONU)
         except Exception as e:
             print(f"1. Hat Hatası: {e}")
 
     # ---> 2. HAT: EKSTRA KANALLAR/GRUPLAR (SADECE 93842) <---
-    # DİKKAT: Burada medyalar tetikleyici kısmında RAM'e alınmış halden çekilir!
     else:
         kaynak_adi = ilk_mesaj.chat.title or "Bilinmeyen Kaynak"
         mesaj_linki = ilk_mesaj.link or "Link Yok"
@@ -265,21 +260,21 @@ async def albumu_isle_ve_yolla(client, grup_id):
 
 
 # ==========================================
-# DİNLEYİCİ TETİKLEYİCİ
+# DİNLEYİCİ TETİKLEYİCİ (TÜM HATLARA IŞIK HIZINDA SNIPE)
 # ==========================================
 @app.on_message(filters.chat(TUM_KAYNAKLAR) & (filters.photo | filters.video | filters.document | filters.audio | filters.voice | filters.video_note))
 async def medyayi_dinle(client, message):
     if message.web_page: return 
 
+    # ORİJİNAL GRUP İÇİN KONU TEYİDİ
     if message.chat.id == KAYNAK_GRUP_ID:
-        # ANA GRUP İÇİN: Konu kontrolü yap ve RAM indirmesini pas geç (Optimize)
         mesaj_konu_id = getattr(message, "message_thread_id", None)
         cevap_id = getattr(message, "reply_to_message_id", None)
         if mesaj_konu_id != KAYNAK_KONU and cevap_id != KAYNAK_KONU:
             return 
         message.ram_file_bytes = None
     else:
-        # EKSTRA KANALLAR İÇİN: Silinmeden ÖNCE tam şu saniyede RAM'e indir!
+        # EKSTRA KANALLAR İÇİN: Silinmeden 0.1 sn içinde RAM'e al
         try:
             indirilen_ram = await client.download_media(message, in_memory=True)
             if downloaded_bytes := indirilen_ram.getvalue():
@@ -298,5 +293,5 @@ async def medyayi_dinle(client, message):
     
     album_havuzu[grup_id].append(message)
 
-print("🚀 Userbot Tüm Hatlarıyla ve Hafıza Optimizasyonuyla Başlatıldı!")
+print("🚀 Userbot Tüm Hatlarıyla ve Yeni Konu Hedeflemesiyle Başlatıldı!")
 app.run()
