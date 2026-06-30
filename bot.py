@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import re  # Linkleri metin içinden otomatik bulmak için eklendi
 from io import BytesIO
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -25,7 +26,7 @@ class SaglikKontrolu(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
-        self.wfile.write("Userbot Canlı Sohbet Loglama ve Manuel İndirme Modunda Aktif!".encode("utf-8"))
+        self.wfile.write("Userbot Canlı Sohbet Loglama ve Toplu İndirme Modunda Aktif!".encode("utf-8"))
         
     def log_message(self, format, *args):
         return 
@@ -48,7 +49,7 @@ YEDEK_GRUP_ID = int(os.environ.get("YEDEK_GRUP_ID"))
 YEDEK_KONU = int(os.environ.get("YEDEK_KONU"))
 LOG_KONU = 78582
 
-# 3. YEDEKLEME VE CANLI LOG AKIŞ KONUSU (İndirilen Tüm Medyalar İçin)
+# 3. YEDEKLEME VE CANLI LOG AKIŞ KONUSU
 YENI_LOG_KONU = 93842
 
 KAYNAK_IDLER = []
@@ -63,7 +64,6 @@ app = Client("benim_userbotum", api_id=API_ID, api_hash=API_HASH, session_string
 
 album_havuzu = {}
 
-# Sohbet içine anlık log basmayı sağlayan yardımcı asenkron fonksiyon (SADECE 93842'YE ATAR)
 async def sohbet_log_gonder(client, metin):
     try:
         await client.send_message(
@@ -86,96 +86,100 @@ def ram_dosyasini_isimlendir(msg, ram_dosyasi):
     return ram_dosyasi
 
 # ==========================================
-# MANUEL LİNKTEN İNDİRME KOMUTU (.indir)
+# MANUEL TOPLU LİNKTEN İNDİRME KOMUTU (.indir)
 # ==========================================
 @app.on_message(filters.command("indir", prefixes=".") & filters.me)
 async def manuel_linkten_indir(client, message):
-    if len(message.command) < 2:
-        await message.edit_text("❌ **Kullanım:** `.indir https://t.me/...`", parse_mode=ParseMode.MARKDOWN)
-        return
+    # Mesajın kendi içindeki veya yanıtlanan mesajdaki metni al
+    text_to_search = message.text or ""
+    if message.reply_to_message:
+        text_to_search += " " + (message.reply_to_message.text or message.reply_to_message.caption or "")
         
-    link = message.command[1]
+    # Metnin içinden t.me linklerini otomatik olarak bul (Regex)
+    links = re.findall(r'https://t\.me/(?:c/)?[a-zA-Z0-9_/-]+', text_to_search)
     
-    try:
-        durum_mesaji = await message.edit_text("⏳ **Link analiz ediliyor...**", parse_mode=ParseMode.MARKDOWN)
-        
-        # Linki Parçalayıp Chat ID ve Message ID'yi Bulma
-        parts = link.rstrip("/").split("/")
-        
-        # Eğer linkte "?single" gibi parametreler varsa temizle
-        msg_id_str = parts[-1].split("?")[0]
-        msg_id = int(msg_id_str)
-        
-        if "c" in parts:
-            # Gizli grup/kanal formatı: https://t.me/c/1234567890/123
-            chat_id = int("-100" + parts[-2])
-        else:
-            # Açık kanal/grup formatı: https://t.me/KanalAdi/123
-            chat_id = parts[-2]
-            
-        # --- MESAJI ÇEKME VE PEER_ID_INVALID KORUMASI ---
-        try:
-            msg = await client.get_messages(chat_id, msg_id)
-        except Exception as e:
-            if "Peer id invalid" in str(e).capitalize() or "PEER_ID_INVALID" in str(e):
-                await durum_mesaji.edit_text("⏳ **Gizli kanal hafızada yok. Önbellek güncelleniyor (Birkaç saniye sürebilir)...**", parse_mode=ParseMode.MARKDOWN)
-                
-                # Pyrogram'ın hafızasına kanalı zorla tanıtmak için dialogs (sohbet) geçmişini tarıyoruz
-                async for _ in client.get_dialogs(limit=300):
-                    pass
-                
-                # Hafızayı yeniledikten sonra tekrar deniyoruz
-                msg = await client.get_messages(chat_id, msg_id)
-            else:
-                raise e
-        
-        if not msg or msg.empty:
-            await durum_mesaji.edit_text("❌ **Mesaj bulunamadı!**\n(O gruba/kanala hesabınızın üye olduğundan emin olun.)", parse_mode=ParseMode.MARKDOWN)
-            return
-            
-        if not msg.media:
-            await durum_mesaji.edit_text("❌ **Bu linkte indirilecek herhangi bir medya bulunmuyor.**", parse_mode=ParseMode.MARKDOWN)
-            return
+    # Aynı link iki kere atılmışsa temizle ve soru işareti (parametre) varsa kırp
+    links = list(dict.fromkeys([link.split("?")[0].rstrip("/") for link in links]))
+    
+    if not links:
+        await message.edit_text("❌ **Kullanım:** `.indir https://t.me/...`\n(Veya içinde linkler olan koca bir mesaja yanıt vererek `.indir` yazın.)", parse_mode=ParseMode.MARKDOWN)
+        return
 
-        # Komutun yazıldığı yerin tespiti
-        hedef_chat = message.chat.id
-        hedef_konu = getattr(message, 'message_thread_id', None)
-        
-        await durum_mesaji.edit_text("⏳ **Medya kısıtlamaları aşılarak RAM'e indiriliyor...**", parse_mode=ParseMode.MARKDOWN)
-        
-        # ALBÜM KONTROLÜ
-        if getattr(msg, "media_group_id", None):
-            album_mesajlari = await client.get_media_group(chat_id, msg_id)
-            medya_grubu = []
+    durum_mesaji = await message.edit_text(f"⏳ **Toplu indirme başlatılıyor... Toplam Link: {len(links)}**", parse_mode=ParseMode.MARKDOWN)
+    
+    hedef_chat = message.chat.id
+    hedef_konu = getattr(message, 'message_thread_id', None)
+    
+    basarili = 0
+    hatali = 0
+    
+    for i, link in enumerate(links, 1):
+        try:
+            await durum_mesaji.edit_text(f"⏳ **İndiriliyor ({i}/{len(links)})...**\n`{link}`", parse_mode=ParseMode.MARKDOWN)
             
-            for m in album_mesajlari:
-                ram_dosyasi = await client.download_media(m, in_memory=True)
-                ram_dosyasi = ram_dosyasini_isimlendir(m, ram_dosyasi)
+            parts = link.split("/")
+            msg_id = int(parts[-1])
+            
+            if "c" in parts:
+                chat_id = int("-100" + parts[-2])
+            else:
+                chat_id = parts[-2]
                 
-                if m.photo: medya_grubu.append(InputMediaPhoto(media=ram_dosyasi))
-                elif m.video: medya_grubu.append(InputMediaVideo(media=ram_dosyasi))
-                elif m.document: medya_grubu.append(InputMediaDocument(media=ram_dosyasi))
-                elif m.audio: medya_grubu.append(InputMediaAudio(media=ram_dosyasi))
+            # --- MESAJI ÇEKME VE PEER_ID_INVALID KORUMASI ---
+            try:
+                msg = await client.get_messages(chat_id, msg_id)
+            except Exception as e:
+                if "Peer id invalid" in str(e).capitalize() or "PEER_ID_INVALID" in str(e):
+                    await durum_mesaji.edit_text(f"⏳ **Gizli kanal aranıyor ({i}/{len(links)})...**\n`{link}`\n*(Önbellek güncelleniyor)*", parse_mode=ParseMode.MARKDOWN)
+                    async for _ in client.get_dialogs(limit=300):
+                        pass
+                    msg = await client.get_messages(chat_id, msg_id)
+                else:
+                    raise e
             
-            await client.send_media_group(chat_id=hedef_chat, media=medya_grubu, reply_to_message_id=hedef_konu)
+            if not msg or msg.empty or not getattr(msg, "media", None):
+                hatali += 1
+                continue
+
+            # ALBÜM KONTROLÜ
+            if getattr(msg, "media_group_id", None):
+                album_mesajlari = await client.get_media_group(chat_id, msg_id)
+                medya_grubu = []
+                
+                for m in album_mesajlari:
+                    ram_dosyasi = await client.download_media(m, in_memory=True)
+                    ram_dosyasi = ram_dosyasini_isimlendir(m, ram_dosyasi)
+                    
+                    if m.photo: medya_grubu.append(InputMediaPhoto(media=ram_dosyasi))
+                    elif m.video: medya_grubu.append(InputMediaVideo(media=ram_dosyasi))
+                    elif m.document: medya_grubu.append(InputMediaDocument(media=ram_dosyasi))
+                    elif m.audio: medya_grubu.append(InputMediaAudio(media=ram_dosyasi))
+                
+                if medya_grubu:
+                    await client.send_media_group(chat_id=hedef_chat, media=medya_grubu, reply_to_message_id=hedef_konu)
+                
+            # TEKLİ MEDYA KONTROLÜ
+            else:
+                ram_dosyasi = await client.download_media(msg, in_memory=True)
+                ram_dosyasi = ram_dosyasini_isimlendir(msg, ram_dosyasi)
+                
+                if msg.photo: await client.send_photo(chat_id=hedef_chat, photo=ram_dosyasi, reply_to_message_id=hedef_konu)
+                elif msg.video: await client.send_video(chat_id=hedef_chat, video=ram_dosyasi, reply_to_message_id=hedef_konu)
+                elif msg.audio or msg.voice: await client.send_audio(chat_id=hedef_chat, audio=ram_dosyasi, reply_to_message_id=hedef_konu)
+                elif msg.document: await client.send_document(chat_id=hedef_chat, document=ram_dosyasi, reply_to_message_id=hedef_konu)
+                elif msg.video_note:
+                    await client.send_video_note(chat_id=hedef_chat, video_note=ram_dosyasi, reply_to_message_id=hedef_konu)
             
-        # TEKLİ MEDYA KONTROLÜ
-        else:
-            ram_dosyasi = await client.download_media(msg, in_memory=True)
-            ram_dosyasi = ram_dosyasini_isimlendir(msg, ram_dosyasi)
+            basarili += 1
+            await asyncio.sleep(2) # Telegram Flood cezası yememek için bekleme
             
-            if msg.photo: await client.send_photo(chat_id=hedef_chat, photo=ram_dosyasi, reply_to_message_id=hedef_konu)
-            elif msg.video: await client.send_video(chat_id=hedef_chat, video=ram_dosyasi, reply_to_message_id=hedef_konu)
-            elif msg.audio or msg.voice: await client.send_audio(chat_id=hedef_chat, audio=ram_dosyasi, reply_to_message_id=hedef_konu)
-            elif msg.document: await client.send_document(chat_id=hedef_chat, document=ram_dosyasi, reply_to_message_id=hedef_konu)
-            elif msg.video_note:
-                await client.send_video_note(chat_id=hedef_chat, video_note=ram_dosyasi, reply_to_message_id=hedef_konu)
-        
-        # İşlem bitince komut mesajını siler
-        await durum_mesaji.delete()
-        
-    except Exception as e:
-        await message.edit_text(f"❌ **İndirme hatası:** `{e}`", parse_mode=ParseMode.MARKDOWN)
+        except Exception as e:
+            hatali += 1
+            print(f"Hata oluşan link: {link} - Hata detayı: {e}")
+            
+    # Döngü bitince sonuç raporu
+    await durum_mesaji.edit_text(f"✅ **Toplu İndirme İşlemi Tamamlandı!**\n\n📥 **Başarıyla İndirilen:** `{basarili}`\n❌ **Hatalı/Medya Olmayan:** `{hatali}`", parse_mode=ParseMode.MARKDOWN)
+
 
 # ==========================================
 # OTO-İLET SİSTEMİ (Arka Plan Dinleyicisi)
@@ -209,7 +213,7 @@ async def albumu_isle_ve_yolla(client, grup_id):
         if len(mesajlar) == 1:
             msg = mesajlar[0]
             
-            # ---> A) ESKİ SİSTEM YEDEKLEMESİ (78582 ve Orijinal Konu) <---
+            # ---> A) ESKİ SİSTEM YEDEKLEMESİ <---
             try:
                 if msg.photo:
                     await client.send_photo(chat_id=YEDEK_GRUP_ID, photo=msg.photo.file_id, reply_to_message_id=YEDEK_KONU, caption="yakalandı")
@@ -254,7 +258,7 @@ async def albumu_isle_ve_yolla(client, grup_id):
 
         # ALBÜM İŞLEMLERİ
         else:
-            # ---> A) ESKİ SİSTEM ALBÜM YEDEKLEMESİ (78582 ve Orijinal Konu) <---
+            # ---> A) ESKİ SİSTEM ALBÜM YEDEKLEMESİ <---
             try:
                 eski_yedek_medyalari = []
                 eski_log_medyalari = []
@@ -316,5 +320,5 @@ async def medyayi_dinle(client, message):
     
     album_havuzu[grup_id].append(message)
 
-print("🚀 3'lü Canlı Sohbet Log ve Manuel İndirme Destekli Userbot Başlatıldı...")
+print("🚀 3'lü Canlı Sohbet Log ve Toplu İndirme Destekli Userbot Başlatıldı...")
 app.run()
