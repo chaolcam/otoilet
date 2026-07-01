@@ -15,7 +15,6 @@ except RuntimeError:
 # --------------------------------------------------
 
 from pyrogram import Client, filters
-from pyrogram.enums import ParseMode
 from pyrogram.types import InputMediaPhoto, InputMediaVideo, InputMediaDocument, InputMediaAudio
 
 logging.getLogger("pyrogram").setLevel(logging.CRITICAL)
@@ -26,7 +25,12 @@ class SaglikKontrolu(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
-        self.wfile.write("Userbot Zırhlı Modda Aktif!".encode("utf-8"))
+        self.wfile.write("Userbot aktif ve log tutuyor!".encode("utf-8"))
+        
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
         
     def log_message(self, format, *args):
         return 
@@ -39,55 +43,46 @@ def web_sunucusunu_baslat():
 Thread(target=web_sunucusunu_baslat, daemon=True).start()
 # -----------------------------------------------------
 
-# --- GİZLİ KEYLERİ GÜVENLİ ÇEKME (ÇÖKME KORUMALI) ---
-def env_sayi_cek(key, varsayilan=0):
-    val = os.environ.get(key)
-    if val:
-        try:
-            return int(val.strip())
-        except ValueError:
-            print(f"❌ SİSTEM UYARISI: {key} bir sayı olmalıdır!")
-    return varsayilan
-
-API_ID = env_sayi_cek("API_ID")
+# --- GİZLİ KEYLERİ SUNUCUDAN ÇEKME ---
+API_ID = int(os.environ.get("API_ID"))
 API_HASH = os.environ.get("API_HASH")
 STRING_SESSION = os.environ.get("STRING_SESSION")
 
-KAYNAK_GRUP_ID = env_sayi_cek("KAYNAK_GRUP_ID")
-KAYNAK_KONU = env_sayi_cek("KAYNAK_KONU")
-YEDEK_GRUP_ID = env_sayi_cek("YEDEK_GRUP_ID")
-YEDEK_KONU = env_sayi_cek("YEDEK_KONU")
+KAYNAK_GRUP_ID = int(os.environ.get("KAYNAK_GRUP_ID"))
+KAYNAK_KONU = int(os.environ.get("KAYNAK_KONU"))
 
+YEDEK_GRUP_ID = int(os.environ.get("YEDEK_GRUP_ID"))
+YEDEK_KONU = int(os.environ.get("YEDEK_KONU"))
+
+# ESKİ LOG KONUSU
+LOG_KONU = 78582
+# YENİ EKLENEN İNDİRME LOG KONUSU
 YENI_LOG_KONU = 93842
 
+# EKSTRA KANALLAR/GRUPLAR (Opsiyonel)
 KAYNAK_IDLER = []
 for key, value in os.environ.items():
-    if key.startswith("KAYNAK_ID_"):
+    if key.startswith("KAYNAK_ID"):
         try:
             KAYNAK_IDLER.append(int(value.strip()))
         except ValueError:
             pass
 
-# Liste boşsa Pyrogram'ın çökmemesi için dummy filtre id'si ekler
-TUM_KAYNAKLAR = []
-if KAYNAK_GRUP_ID: TUM_KAYNAKLAR.append(KAYNAK_GRUP_ID)
-for x in KAYNAK_IDLER:
-    if x: TUM_KAYNAKLAR.append(x)
-if not TUM_KAYNAKLAR: TUM_KAYNAKLAR = [0]
+TUM_KAYNAKLAR = [KAYNAK_GRUP_ID] + KAYNAK_IDLER
+# -------------------------------------
+
+def susturucu(hata_loop, context):
+    hata_metni = str(context.get("exception", ""))
+    if "Peer id invalid" in hata_metni or "ID not found" in hata_metni:
+        pass 
+    else:
+        hata_loop.default_exception_handler(context)
+
+loop.set_exception_handler(susturucu)
 
 app = Client("benim_userbotum", api_id=API_ID, api_hash=API_HASH, session_string=STRING_SESSION)
-album_havuzu = {}
 
-async def sohbet_log_gonder(client, metin):
-    try:
-        await client.send_message(
-            chat_id=YEDEK_GRUP_ID,
-            text=f"🤖 <b>[SİSTEM LOGU]:</b>\n{metin}",
-            reply_to_message_id=YENI_LOG_KONU,
-            parse_mode=ParseMode.HTML
-        )
-    except:
-        pass
+album_havuzu = {}
 
 def ram_dosyasini_isimlendir(msg, ram_dosyasi):
     if msg.photo: ram_dosyasi.name = "gorsel.jpg"
@@ -100,12 +95,11 @@ def ram_dosyasini_isimlendir(msg, ram_dosyasi):
     return ram_dosyasi
 
 # ==========================================
-# 3. HAT: MANUEL VE TOPLU İNDİRME (.indir)
+# YENİ ÖZELLİK: MANUEL VE TOPLU İNDİRME (.indir)
 # ==========================================
 @app.on_message(filters.command("indir", prefixes=".") & filters.me)
 async def manuel_linkten_indir(client, message):
     try:
-        # Korumalı ilk satır: Markdown içermez, botun canlı olduğunu anında kanıtlar
         durum_mesaji = await message.edit_text("⏳ Sistem yanit verdi, linkler taraniyor...")
         
         text_to_search = message.text or ""
@@ -122,13 +116,11 @@ async def manuel_linkten_indir(client, message):
         await durum_mesaji.edit_text(f"⏳ Toplu indirme baslatiliyor... Toplam Link: {len(links)}")
         
         hedef_chat = message.chat.id
-        
-        # Sürüm çökme korumalı konu (thread) tespiti
         hedef_konu = getattr(message, "message_thread_id", None)
         if not hedef_konu and message.reply_to_message:
             hedef_konu = getattr(message.reply_to_message, "message_thread_id", None) or message.reply_to_message.id
         if not hedef_konu:
-            hedef_konu = message.id # Hiçbiri yoksa kendi yazdığın komuta yanıt olarak atar (konuda kalır)
+            hedef_konu = message.id
         
         basarili = 0
         hatali = 0
@@ -193,75 +185,84 @@ async def manuel_linkten_indir(client, message):
         print(f"Kritik Komut Hatası: {master_error}")
 
 # ==========================================
-# 1. VE 2. HAT: OTO-İLET SİSTEMİ 
+# ANA OTO-İLET SİSTEMİ
 # ==========================================
 async def albumu_isle_ve_yolla(client, grup_id):
-    await asyncio.sleep(2.5) 
+    await asyncio.sleep(2) 
     mesajlar = album_havuzu.pop(grup_id, None)
     if not mesajlar: return
 
-    ilk_mesaj = mesajlar[0]
-    gonderen = ilk_mesaj.from_user
-    kaynak_id = ilk_mesaj.chat.id
-    
-    if gonderen:
-        isim = gonderen.first_name or "Isimsiz Kullanici"
-        kisi_linki_html = f'<a href="tg://user?id={gonderen.id}">{isim}</a>'
-    else:
-        kisi_linki_html = "<i>Gizli/Bilinmeyen Kullanici</i>"
+    gonderen = mesajlar[0].from_user
+    kaynak_id = mesajlar[0].chat.id
 
-    # ---> 1. HAT: ORİJİNAL GRUP (SADECE YEDEK_KONU) <---
-    if kaynak_id == KAYNAK_GRUP_ID:
-        eski_yedek_yazisi = f"yakalandı\n👤 Gönderen: {kisi_linki_html}"
-        
-        try:
+    if gonderen:
+        if gonderen.username:
+            kisi_linki = f"@{gonderen.username}"
+        else:
+            isim = gonderen.first_name or "Bilinmeyen İsim"
+            kisi_linki = f"[{isim}](tg://user?id={gonderen.id})"
+    else:
+        kisi_linki = "Gizli/Bilinmeyen Kullanıcı"
+
+    try:
+        # --- A. ORİJİNAL KODUN (%100 AYNISI) ---
+        if kaynak_id == KAYNAK_GRUP_ID:
             if len(mesajlar) == 1:
                 msg = mesajlar[0]
                 if msg.photo:
-                    await client.send_photo(chat_id=YEDEK_GRUP_ID, photo=msg.photo.file_id, reply_to_message_id=YEDEK_KONU, caption=eski_yedek_yazisi, parse_mode=ParseMode.HTML)
+                    # Orijinal Yedek
+                    await client.send_photo(chat_id=YEDEK_GRUP_ID, photo=msg.photo.file_id, reply_to_message_id=YEDEK_KONU, caption="yakalandı")
+                    # Log (Kimlikli) Yedek
+                    await client.send_photo(chat_id=YEDEK_GRUP_ID, photo=msg.photo.file_id, reply_to_message_id=LOG_KONU, caption=kisi_linki)
                 elif msg.video:
-                    await client.send_video(chat_id=YEDEK_GRUP_ID, video=msg.video.file_id, reply_to_message_id=YEDEK_KONU, caption=eski_yedek_yazisi, parse_mode=ParseMode.HTML)
-                elif msg.document:
-                    await client.send_document(chat_id=YEDEK_GRUP_ID, document=msg.document.file_id, reply_to_message_id=YEDEK_KONU, caption=eski_yedek_yazisi, parse_mode=ParseMode.HTML)
-                elif msg.audio or msg.voice:
-                    await client.send_audio(chat_id=YEDEK_GRUP_ID, audio=(msg.audio.file_id if msg.audio else msg.voice.file_id), reply_to_message_id=YEDEK_KONU, caption=eski_yedek_yazisi, parse_mode=ParseMode.HTML)
-            else:
-                yedek_medyalari = []
-                for i, msg in enumerate(mesajlar):
-                    o_yazi = eski_yedek_yazisi if i == 0 else ""
-                    if msg.photo:
-                        yedek_medyalari.append(InputMediaPhoto(media=msg.photo.file_id, caption=o_yazi, parse_mode=ParseMode.HTML))
-                    elif msg.video:
-                        yedek_medyalari.append(InputMediaVideo(media=msg.video.file_id, caption=o_yazi, parse_mode=ParseMode.HTML))
+                    # Orijinal Yedek
+                    await client.send_video(chat_id=YEDEK_GRUP_ID, video=msg.video.file_id, reply_to_message_id=YEDEK_KONU, caption="yakalandı")
+                    # Log (Kimlikli) Yedek
+                    await client.send_video(chat_id=YEDEK_GRUP_ID, video=msg.video.file_id, reply_to_message_id=LOG_KONU, caption=kisi_linki)
+                print("✅ Tekli medya (Orijinal + Log) aktarıldı!")
                 
-                if yedek_medyalari:
-                    await client.send_media_group(chat_id=YEDEK_GRUP_ID, media=yedek_medyalari, reply_to_message_id=YEDEK_KONU)
-        except Exception as e:
-            print(f"1. Hat Hatası: {e}")
+            else:
+                yedek_medyalari_hazirla = []
+                log_medyalari_hazirla = []
+                
+                for i, msg in enumerate(mesajlar):
+                    orijinal_yazi = "yakalandı" if i == 0 else ""
+                    log_yazi = kisi_linki if i == 0 else ""
+                    
+                    if msg.photo:
+                        yedek_medyalari_hazirla.append(InputMediaPhoto(media=msg.photo.file_id, caption=orijinal_yazi))
+                        log_medyalari_hazirla.append(InputMediaPhoto(media=msg.photo.file_id, caption=log_yazi))
+                    elif msg.video:
+                        yedek_medyalari_hazirla.append(InputMediaVideo(media=msg.video.file_id, caption=orijinal_yazi))
+                        log_medyalari_hazirla.append(InputMediaVideo(media=msg.video.file_id, caption=log_yazi))
+                
+                # Orijinal Albüm Yedeği
+                await client.send_media_group(chat_id=YEDEK_GRUP_ID, media=yedek_medyalari_hazirla, reply_to_message_id=YEDEK_KONU)
+                # Log Albüm Yedeği
+                await client.send_media_group(chat_id=YEDEK_GRUP_ID, media=log_medyalari_hazirla, reply_to_message_id=LOG_KONU)
+                print(f"✅ {len(mesajlar)} parçalı albüm (Orijinal + Log) aktarıldı!")
 
-    # ---> 2. HAT: EKSTRA KANALLAR/GRUPLAR (SADECE 93842) <---
-    else:
-        kaynak_adi = ilk_mesaj.chat.title or "Bilinmeyen Kaynak"
-        mesaj_linki = ilk_mesaj.link or "Link Yok"
-        
-        ortak_aciklama_yeni = (
-            f"🚨 <b>YENİ MEDYA İNDİRİLDİ</b>\n"
-            f"👤 <b>Gönderen:</b> {kisi_linki_html}\n"
-            f"📍 <b>Kaynak:</b> {kaynak_adi}\n"
-            f"🔗 <b>Bağlantı:</b> <a href='{mesaj_linki}'>Orijinal Mesaja Git</a>"
-        )
-        await sohbet_log_gonder(client, "🔄 Otomatik kanal indirmesi tamamlandi. Konuya aktariliyor...")
+        # --- B. YENİ EKLENEN KISITLAMALI KANALLAR İÇİN (93842) ---
+        else:
+            kaynak_adi = mesajlar[0].chat.title or "Bilinmeyen Kaynak"
+            mesaj_linki = mesajlar[0].link or "Link Yok"
+            
+            ortak_aciklama_yeni = (
+                f"🚨 **YENİ MEDYA İNDİRİLDİ**\n"
+                f"👤 **Gönderen:** {kisi_linki}\n"
+                f"📍 **Kaynak:** {kaynak_adi}\n"
+                f"🔗 **Bağlantı:** [Orijinal Mesaja Git]({mesaj_linki})"
+            )
 
-        try:
             if len(mesajlar) == 1:
                 msg = mesajlar[0]
                 if not getattr(msg, "ram_file_bytes", None): return
                 indirilen = ram_dosyasini_isimlendir(msg, BytesIO(msg.ram_file_bytes))
                 
-                if msg.photo: await client.send_photo(chat_id=YEDEK_GRUP_ID, photo=indirilen, reply_to_message_id=YENI_LOG_KONU, caption=ortak_aciklama_yeni, parse_mode=ParseMode.HTML)
-                elif msg.video: await client.send_video(chat_id=YEDEK_GRUP_ID, video=indirilen, reply_to_message_id=YENI_LOG_KONU, caption=ortak_aciklama_yeni, parse_mode=ParseMode.HTML)
-                elif msg.voice or msg.audio: await client.send_audio(chat_id=YEDEK_GRUP_ID, audio=indirilen, reply_to_message_id=YENI_LOG_KONU, caption=ortak_aciklama_yeni, parse_mode=ParseMode.HTML)
-                elif msg.document: await client.send_document(chat_id=YEDEK_GRUP_ID, document=indirilen, reply_to_message_id=YENI_LOG_KONU, caption=ortak_aciklama_yeni, parse_mode=ParseMode.HTML)
+                if msg.photo: await client.send_photo(chat_id=YEDEK_GRUP_ID, photo=indirilen, reply_to_message_id=YENI_LOG_KONU, caption=ortak_aciklama_yeni)
+                elif msg.video: await client.send_video(chat_id=YEDEK_GRUP_ID, video=indirilen, reply_to_message_id=YENI_LOG_KONU, caption=ortak_aciklama_yeni)
+                elif msg.document: await client.send_document(chat_id=YEDEK_GRUP_ID, document=indirilen, reply_to_message_id=YENI_LOG_KONU, caption=ortak_aciklama_yeni)
+                elif msg.audio or msg.voice: await client.send_audio(chat_id=YEDEK_GRUP_ID, audio=indirilen, reply_to_message_id=YENI_LOG_KONU, caption=ortak_aciklama_yeni)
             else:
                 yeni_log_medyalari = []
                 for i, msg in enumerate(mesajlar):
@@ -269,15 +270,17 @@ async def albumu_isle_ve_yolla(client, grup_id):
                     indirilen = ram_dosyasini_isimlendir(msg, BytesIO(msg.ram_file_bytes))
                     yazi = ortak_aciklama_yeni if i == 0 else ""
                     
-                    if msg.photo: yeni_log_medyalari.append(InputMediaPhoto(media=indirilen, caption=yazi, parse_mode=ParseMode.HTML))
-                    elif msg.video: yeni_log_medyalari.append(InputMediaVideo(media=indirilen, caption=yazi, parse_mode=ParseMode.HTML))
-                    elif msg.document: yeni_log_medyalari.append(InputMediaDocument(media=indirilen, caption=yazi, parse_mode=ParseMode.HTML))
-                    elif msg.audio: yeni_log_medyalari.append(InputMediaAudio(media=indirilen, caption=yazi, parse_mode=ParseMode.HTML))
+                    if msg.photo: yeni_log_medyalari.append(InputMediaPhoto(media=indirilen, caption=yazi))
+                    elif msg.video: yeni_log_medyalari.append(InputMediaVideo(media=indirilen, caption=yazi))
+                    elif msg.document: yeni_log_medyalari.append(InputMediaDocument(media=indirilen, caption=yazi))
+                    elif msg.audio: yeni_log_medyalari.append(InputMediaAudio(media=indirilen, caption=yazi))
                 
                 if yeni_log_medyalari:
                     await client.send_media_group(chat_id=YEDEK_GRUP_ID, media=yeni_log_medyalari, reply_to_message_id=YENI_LOG_KONU)
-        except Exception as e:
-            print(f"2. Hat Hatası: {e}")
+
+    except Exception as e:
+        print(f"❌ Aktarım hatası: {e}")
+
 
 # ==========================================
 # DİNLEYİCİ TETİKLEYİCİ
@@ -287,12 +290,16 @@ async def medyayi_dinle(client, message):
     if message.web_page: return 
 
     if message.chat.id == KAYNAK_GRUP_ID:
+        # SENİN ESKİ DİNLEME MANTIĞIN (%100 AYNI)
         mesaj_konu_id = getattr(message, "message_thread_id", None)
         cevap_id = getattr(message, "reply_to_message_id", None)
-        if mesaj_konu_id != KAYNAK_KONU and cevap_id != KAYNAK_KONU:
-            return 
-        message.ram_file_bytes = None
+        
+        if mesaj_konu_id == KAYNAK_KONU or cevap_id == KAYNAK_KONU:
+            message.ram_file_bytes = None
+        else:
+            return # Yanlış konuysa geç
     else:
+        # EKSTRA KANALLAR İÇİN RAM'E İNDİRME
         try:
             indirilen_ram = await client.download_media(message, in_memory=True)
             if downloaded_bytes := indirilen_ram.getvalue():
@@ -300,7 +307,6 @@ async def medyayi_dinle(client, message):
             else:
                 message.ram_file_bytes = None
         except Exception as e:
-            print(f"Anlık indirme başarısız: {e}")
             message.ram_file_bytes = None
 
     grup_id = message.media_group_id or f"tekil_{message.id}"
@@ -311,5 +317,5 @@ async def medyayi_dinle(client, message):
     
     album_havuzu[grup_id].append(message)
 
-print("🚀 Userbot Tum Hatalara Karsi Zirhli Modda Yeniden Baslatildi!")
+print("🚀 Çift yönlü (Yedek ve Log) iletici Userbot başlatıldı. Kısıtlama bypass ve .indir aktif...")
 app.run()
