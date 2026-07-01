@@ -26,7 +26,7 @@ class SaglikKontrolu(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
-        self.wfile.write("Userbot Tum Hatlariyla ve Kesintisiz Toplu Indirme Moduyla Aktif!".encode("utf-8"))
+        self.wfile.write("Userbot Zırhlı Modda Aktif!".encode("utf-8"))
         
     def log_message(self, format, *args):
         return 
@@ -39,32 +39,43 @@ def web_sunucusunu_baslat():
 Thread(target=web_sunucusunu_baslat, daemon=True).start()
 # -----------------------------------------------------
 
-# --- GİZLİ KEYLERİ SUNUCUDAN ÇEKME ---
-API_ID = int(os.environ.get("API_ID"))
+# --- GİZLİ KEYLERİ GÜVENLİ ÇEKME (ÇÖKME KORUMALI) ---
+def env_sayi_cek(key, varsayilan=0):
+    val = os.environ.get(key)
+    if val:
+        try:
+            return int(val.strip())
+        except ValueError:
+            print(f"❌ SİSTEM UYARISI: {key} bir sayı olmalıdır!")
+    return varsayilan
+
+API_ID = env_sayi_cek("API_ID")
 API_HASH = os.environ.get("API_HASH")
 STRING_SESSION = os.environ.get("STRING_SESSION")
 
-# 1. HAT: ORİJİNAL KAYNAK GRUP VE KONU AYARLARI
-KAYNAK_GRUP_ID = int(os.environ.get("KAYNAK_GRUP_ID"))
-KAYNAK_KONU = int(os.environ.get("KAYNAK_KONU"))
+KAYNAK_GRUP_ID = env_sayi_cek("KAYNAK_GRUP_ID")
+KAYNAK_KONU = env_sayi_cek("KAYNAK_KONU")
+YEDEK_GRUP_ID = env_sayi_cek("YEDEK_GRUP_ID")
+YEDEK_KONU = env_sayi_cek("YEDEK_KONU")
 
-YEDEK_GRUP_ID = int(os.environ.get("YEDEK_GRUP_ID"))
-YEDEK_KONU = int(os.environ.get("YEDEK_KONU"))
-
-# 2. HAT: EKSTRA KANALLAR VE 93842 KONUSU
 YENI_LOG_KONU = 93842
+
 KAYNAK_IDLER = []
 for key, value in os.environ.items():
-    if key.startswith("KAYNAK_ID"):
+    if key.startswith("KAYNAK_ID_"):
         try:
             KAYNAK_IDLER.append(int(value.strip()))
         except ValueError:
             pass
 
-TUM_KAYNAKLAR = [KAYNAK_GRUP_ID] + KAYNAK_IDLER
+# Liste boşsa Pyrogram'ın çökmemesi için dummy filtre id'si ekler
+TUM_KAYNAKLAR = []
+if KAYNAK_GRUP_ID: TUM_KAYNAKLAR.append(KAYNAK_GRUP_ID)
+for x in KAYNAK_IDLER:
+    if x: TUM_KAYNAKLAR.append(x)
+if not TUM_KAYNAKLAR: TUM_KAYNAKLAR = [0]
 
 app = Client("benim_userbotum", api_id=API_ID, api_hash=API_HASH, session_string=STRING_SESSION)
-
 album_havuzu = {}
 
 async def sohbet_log_gonder(client, metin):
@@ -93,95 +104,93 @@ def ram_dosyasini_isimlendir(msg, ram_dosyasi):
 # ==========================================
 @app.on_message(filters.command("indir", prefixes=".") & filters.me)
 async def manuel_linkten_indir(client, message):
-    text_to_search = message.text or ""
-    if message.reply_to_message:
-        text_to_search += " " + (message.reply_to_message.text or message.reply_to_message.caption or "")
+    try:
+        # Korumalı ilk satır: Markdown içermez, botun canlı olduğunu anında kanıtlar
+        durum_mesaji = await message.edit_text("⏳ Sistem yanit verdi, linkler taraniyor...")
         
-    links = re.findall(r'https://t\.me/(?:c/)?[a-zA-Z0-9_/-]+', text_to_search)
-    links = list(dict.fromkeys([link.split("?")[0].rstrip("/") for link in links]))
-    
-    if not links:
-        await message.edit_text("❌ **Kullanım:** `.indir https://t.me/...`", parse_mode=ParseMode.MARKDOWN)
-        return
-
-    durum_mesaji = await message.edit_text(f"⏳ **Toplu indirme başlatılıyor... Toplam: {len(links)}**", parse_mode=ParseMode.MARKDOWN)
-    
-    hedef_chat = message.chat.id
-    
-    hedef_konu = message.message_thread_id
-    if not hedef_konu and message.reply_to_message:
-        hedef_konu = message.reply_to_message.message_thread_id or message.reply_to_message_id
-    if not hedef_konu:
-        hedef_konu = message.id
-    
-    basarili = 0
-    hatali = 0
-    
-    for i, link in enumerate(links, 1):
-        try:
-            await durum_mesaji.edit_text(f"⏳ **Analiz ediliyor ({i}/{len(links)})...**\n`{link}`", parse_mode=ParseMode.MARKDOWN)
-            parts = link.split("/")
-            msg_id = int(parts[-1])
-            chat_id = int("-100" + parts[-2]) if "c" in parts else parts[-2]
-                
-            # --- MESAJI ÇEKME VE PEER_ID_INVALID KORUMASI ---
-            try:
-                msg = await client.get_messages(chat_id, msg_id)
-            except Exception as e:
-                if "Peer id invalid" in str(e).capitalize() or "PEER_ID_INVALID" in str(e):
-                    await durum_mesaji.edit_text(f"⏳ **Gizli kanal için önbellek yenileniyor ({i}/{len(links)})...**", parse_mode=ParseMode.MARKDOWN)
-                    async for _ in client.get_dialogs(limit=300): pass
-                    msg = await client.get_messages(chat_id, msg_id)
-                else: raise e
+        text_to_search = message.text or ""
+        if message.reply_to_message:
+            text_to_search += " " + (message.reply_to_message.text or message.reply_to_message.caption or "")
             
-            if not msg or msg.empty or not getattr(msg, "media", None):
-                hatali += 1
-                continue
+        links = re.findall(r'https://t\.me/(?:c/)?[a-zA-Z0-9_/-]+', text_to_search)
+        links = list(dict.fromkeys([link.split("?")[0].rstrip("/") for link in links]))
+        
+        if not links:
+            await durum_mesaji.edit_text("❌ Kullanim: .indir https://t.me/...")
+            return
 
-            # ALBÜM İŞLEMLERİ VE ALBÜM İÇİN PEER_ID_INVALID KORUMASI
-            if getattr(msg, "media_group_id", None):
-                await durum_mesaji.edit_text(f"⏳ **Albüm parçaları RAM'e indiriliyor ({i}/{len(links)})...**", parse_mode=ParseMode.MARKDOWN)
+        await durum_mesaji.edit_text(f"⏳ Toplu indirme baslatiliyor... Toplam Link: {len(links)}")
+        
+        hedef_chat = message.chat.id
+        
+        # Sürüm çökme korumalı konu (thread) tespiti
+        hedef_konu = getattr(message, "message_thread_id", None)
+        if not hedef_konu and message.reply_to_message:
+            hedef_konu = getattr(message.reply_to_message, "message_thread_id", None) or message.reply_to_message.id
+        if not hedef_konu:
+            hedef_konu = message.id # Hiçbiri yoksa kendi yazdığın komuta yanıt olarak atar (konuda kalır)
+        
+        basarili = 0
+        hatali = 0
+        
+        for i, link in enumerate(links, 1):
+            try:
+                await durum_mesaji.edit_text(f"⏳ Indiriliyor ({i}/{len(links)})...")
+                parts = link.split("/")
+                msg_id = int(parts[-1])
+                chat_id = int("-100" + parts[-2]) if "c" in parts else parts[-2]
+                    
                 try:
-                    album_mesajlari = await client.get_media_group(chat_id, msg_id)
+                    msg = await client.get_messages(chat_id, msg_id)
                 except Exception as e:
                     if "Peer id invalid" in str(e).capitalize() or "PEER_ID_INVALID" in str(e):
+                        await durum_mesaji.edit_text(f"⏳ Gizli kanal icin onbellek yenileniyor ({i}/{len(links)})...")
                         async for _ in client.get_dialogs(limit=300): pass
-                        album_mesajlari = await client.get_media_group(chat_id, msg_id)
+                        msg = await client.get_messages(chat_id, msg_id)
                     else: raise e
+                
+                if not msg or msg.empty or not getattr(msg, "media", None):
+                    hatali += 1
+                    continue
 
-                medya_grubu = []
-                for m in album_mesajlari:
-                    ram_dosyasi = await client.download_media(m, in_memory=True)
-                    ram_dosyasi = ram_dosyasini_isimlendir(m, ram_dosyasi)
+                if getattr(msg, "media_group_id", None):
+                    try:
+                        album_mesajlari = await client.get_media_group(chat_id, msg_id)
+                    except Exception as e:
+                        if "Peer id invalid" in str(e).capitalize() or "PEER_ID_INVALID" in str(e):
+                            async for _ in client.get_dialogs(limit=300): pass
+                            album_mesajlari = await client.get_media_group(chat_id, msg_id)
+                        else: raise e
+
+                    medya_grubu = []
+                    for m in album_mesajlari:
+                        ram_dosyasi = await client.download_media(m, in_memory=True)
+                        ram_dosyasi = ram_dosyasini_isimlendir(m, ram_dosyasi)
+                        
+                        if m.photo: medya_grubu.append(InputMediaPhoto(media=ram_dosyasi))
+                        elif m.video: medya_grubu.append(InputMediaVideo(media=ram_dosyasi))
+                        elif m.document: medya_grubu.append(InputMediaDocument(media=ram_dosyasi))
+                        elif m.audio: medya_grubu.append(InputMediaAudio(media=ram_dosyasi))
+                    if medya_grubu:
+                        await client.send_media_group(chat_id=hedef_chat, media=medya_grubu, reply_to_message_id=hedef_konu)
+                else:
+                    ram_dosyasi = await client.download_media(msg, in_memory=True)
+                    ram_dosyasi = ram_dosyasini_isimlendir(msg, ram_dosyasi)
                     
-                    if m.photo: medya_grubu.append(InputMediaPhoto(media=ram_dosyasi))
-                    elif m.video: medya_grubu.append(InputMediaVideo(media=ram_dosyasi))
-                    elif m.document: medya_grubu.append(InputMediaDocument(media=ram_dosyasi))
-                    elif m.audio: medya_grubu.append(InputMediaAudio(media=ram_dosyasi))
+                    if msg.photo: await client.send_photo(chat_id=hedef_chat, photo=ram_dosyasi, reply_to_message_id=hedef_konu)
+                    elif msg.video: await client.send_video(chat_id=hedef_chat, video=ram_dosyasi, reply_to_message_id=hedef_konu)
+                    elif msg.audio or msg.voice: await client.send_audio(chat_id=hedef_chat, audio=ram_dosyasi, reply_to_message_id=hedef_konu)
+                    elif msg.document: await client.send_document(chat_id=hedef_chat, document=ram_dosyasi, reply_to_message_id=hedef_konu)
+                    elif msg.video_note: await client.send_video_note(chat_id=hedef_chat, video_note=ram_dosyasi, reply_to_message_id=hedef_konu)
                 
-                if medya_grubu:
-                    await client.send_media_group(chat_id=hedef_chat, media=medya_grubu, reply_to_message_id=hedef_konu)
-            
-            # TEKLİ MEDYA İŞLEMLERİ
-            else:
-                await durum_mesaji.edit_text(f"⏳ **Tekli medya RAM'e indiriliyor ({i}/{len(links)})...**", parse_mode=ParseMode.MARKDOWN)
-                ram_dosyasi = await client.download_media(msg, in_memory=True)
-                ram_dosyasi = ram_dosyasini_isimlendir(msg, ram_dosyasi)
+                basarili += 1
+                await asyncio.sleep(2) 
+            except Exception as e:
+                hatali += 1
                 
-                if msg.photo: await client.send_photo(chat_id=hedef_chat, photo=ram_dosyasi, reply_to_message_id=hedef_konu)
-                elif msg.video: await client.send_video(chat_id=hedef_chat, video=ram_dosyasi, reply_to_message_id=hedef_konu)
-                elif msg.audio or msg.voice: await client.send_audio(chat_id=hedef_chat, audio=ram_dosyasi, reply_to_message_id=hedef_konu)
-                elif msg.document: await client.send_document(chat_id=hedef_chat, document=ram_dosyasi, reply_to_message_id=hedef_konu)
-                elif msg.video_note: await client.send_video_note(chat_id=hedef_chat, video_note=ram_dosyasi, reply_to_message_id=hedef_konu)
-            
-            basarili += 1
-            await asyncio.sleep(2) # Flood cezası yememek için bekleme süresi
-        except Exception as e:
-            hatali += 1
-            print(f"Hata oluşan link: {link} - Detay: {e}")
-            
-    await durum_mesaji.edit_text(f"✅ **İşlem Tamamlandı!**\n📥 İndirilen: `{basarili}` | ❌ Hatalı: `{hatali}`", parse_mode=ParseMode.MARKDOWN)
-
+        await durum_mesaji.edit_text(f"✅ Islem Tamamlandi!\n📥 Indirilen: {basarili} | ❌ Hatali: {hatali}")
+    except Exception as master_error:
+        print(f"Kritik Komut Hatası: {master_error}")
 
 # ==========================================
 # 1. VE 2. HAT: OTO-İLET SİSTEMİ 
@@ -196,10 +205,10 @@ async def albumu_isle_ve_yolla(client, grup_id):
     kaynak_id = ilk_mesaj.chat.id
     
     if gonderen:
-        isim = gonderen.first_name or "İsimsiz Kullanıcı"
+        isim = gonderen.first_name or "Isimsiz Kullanici"
         kisi_linki_html = f'<a href="tg://user?id={gonderen.id}">{isim}</a>'
     else:
-        kisi_linki_html = "<i>Gizli/Bilinmeyen Kullanıcı</i>"
+        kisi_linki_html = "<i>Gizli/Bilinmeyen Kullanici</i>"
 
     # ---> 1. HAT: ORİJİNAL GRUP (SADECE YEDEK_KONU) <---
     if kaynak_id == KAYNAK_GRUP_ID:
@@ -241,7 +250,7 @@ async def albumu_isle_ve_yolla(client, grup_id):
             f"📍 <b>Kaynak:</b> {kaynak_adi}\n"
             f"🔗 <b>Bağlantı:</b> <a href='{mesaj_linki}'>Orijinal Mesaja Git</a>"
         )
-        await sohbet_log_gonder(client, f"🔄 Otomatik kanal indirmesi tamamlandı. Konuya aktarılıyor...")
+        await sohbet_log_gonder(client, "🔄 Otomatik kanal indirmesi tamamlandi. Konuya aktariliyor...")
 
         try:
             if len(mesajlar) == 1:
@@ -270,15 +279,13 @@ async def albumu_isle_ve_yolla(client, grup_id):
         except Exception as e:
             print(f"2. Hat Hatası: {e}")
 
-
 # ==========================================
-# DİNLEYİCİ TETİKLEYİCİ (TÜM HATLARA IŞIK HIZINDA SNIPE)
+# DİNLEYİCİ TETİKLEYİCİ
 # ==========================================
 @app.on_message(filters.chat(TUM_KAYNAKLAR) & (filters.photo | filters.video | filters.document | filters.audio | filters.voice | filters.video_note))
 async def medyayi_dinle(client, message):
     if message.web_page: return 
 
-    # ORİJİNAL GRUP İÇİN KONU TEYİDİ
     if message.chat.id == KAYNAK_GRUP_ID:
         mesaj_konu_id = getattr(message, "message_thread_id", None)
         cevap_id = getattr(message, "reply_to_message_id", None)
@@ -286,7 +293,6 @@ async def medyayi_dinle(client, message):
             return 
         message.ram_file_bytes = None
     else:
-        # EKSTRA KANALLAR İÇİN: Silinmeden ÖNCE RAM'e al
         try:
             indirilen_ram = await client.download_media(message, in_memory=True)
             if downloaded_bytes := indirilen_ram.getvalue():
@@ -305,5 +311,5 @@ async def medyayi_dinle(client, message):
     
     album_havuzu[grup_id].append(message)
 
-print("🚀 Userbot Toplu Indirme Kilitlenme Korumasiyla Yeniden Baslatildi!")
+print("🚀 Userbot Tum Hatalara Karsi Zirhli Modda Yeniden Baslatildi!")
 app.run()
